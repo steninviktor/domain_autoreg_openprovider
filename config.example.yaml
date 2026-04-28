@@ -1,0 +1,24 @@
+database_path: state/domains.sqlite3
+check_interval_seconds: 60
+batch_size: 15
+
+registration:
+  enabled: false
+  period: 1
+  autorenew: default
+  max_create_price: 20
+  allowed_extensions:
+    - it
+    - es
+    - fr
+  owner_handle: OWNER-HANDLE
+  admin_handle: ADMIN-HANDLE
+  tech_handle: TECH-HANDLE
+  billing_handle: BILLING-HANDLE
+  ns_group: default
+
+telegram:
+  enabled: false
+  bot_token: ""
+  chat_id: ""
+  timeout_seconds: 10

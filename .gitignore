@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env
+config.yaml
+domains.txt
+state/
+*.sqlite3
+*.log
+.pytest_cache/
+.venv/
+venv/
+docs/session-notes.md

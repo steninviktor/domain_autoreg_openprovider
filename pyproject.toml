@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domain-autoreg-openprovider"
+version = "0.1.0"
+description = "Openprovider domain availability monitor and auto-registration CLI"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+
+[project.scripts]
+domain-autoreg = "domain_autoreg.cli:main"
+
+[tool.setuptools]
+packages = ["domain_autoreg"]
