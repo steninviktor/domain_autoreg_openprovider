@@ -24,9 +24,21 @@ class DomainRecord:
     last_error: str | None
     openprovider_domain_id: int | None
     registered_at: str | None
+    created_at: str | None = None
 
     def as_domain_name(self) -> DomainName:
         return DomainName(fqdn=self.fqdn, name=self.name, extension=self.extension, id=self.id)
+
+
+@dataclass(frozen=True)
+class DomainEvent:
+    id: int
+    domain_id: int | None
+    fqdn: str
+    event_type: str
+    message: str | None
+    payload: dict
+    created_at: str
 
 
 def init_db(path: Path) -> None:
@@ -116,6 +128,144 @@ class DomainRepository:
             else:
                 rows = conn.execute("SELECT * FROM domains ORDER BY id").fetchall()
         return [_record(row) for row in rows]
+
+    def list_domains_for_gui(self, view_filter: str | None = None) -> list[DomainRecord]:
+        filter_name = (view_filter or "all").strip().lower()
+        if filter_name in {"", "all"}:
+            return self.list_domains()
+        if filter_name == "registered":
+            return self.list_domains("registered")
+        if filter_name == "errors":
+            return self.list_domains("registration_failed")
+
+        with self._connect() as conn:
+            if filter_name == "unchecked":
+                rows = conn.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = 'active'
+                      AND last_check_at IS NULL
+                      AND (
+                        SELECT event_type FROM domain_events
+                        WHERE domain_id = domains.id
+                        ORDER BY id DESC
+                        LIMIT 1
+                      ) IS NULL
+                    ORDER BY id
+                    """
+                ).fetchall()
+            elif filter_name == "busy":
+                rows = conn.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = 'active'
+                      AND last_check_at IS NOT NULL
+                      AND (
+                        SELECT event_type FROM domain_events
+                        WHERE domain_id = domains.id
+                        ORDER BY id DESC
+                        LIMIT 1
+                      ) = 'checked'
+                    ORDER BY id
+                    """
+                ).fetchall()
+            elif filter_name == "free":
+                rows = conn.execute(
+                    """
+                    SELECT * FROM domains
+                    WHERE status = 'active'
+                      AND (
+                        SELECT event_type FROM domain_events
+                        WHERE domain_id = domains.id
+                        ORDER BY id DESC
+                        LIMIT 1
+                      ) IN ('free', 'dry_run', 'manual_registration_required')
+                    ORDER BY id
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM domains ORDER BY id").fetchall()
+        return [_record(row) for row in rows]
+
+    def list_domain_events(
+        self,
+        limit: int = 100,
+        fqdn: str | None = None,
+        event_type: str | None = None,
+    ) -> list[DomainEvent]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if fqdn:
+            clauses.append("fqdn = ?")
+            params.append(fqdn.strip().lower())
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type.strip())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM domain_events
+                {where}
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [_event_record(row) for row in rows]
+
+    def delete_domains(self, domain_ids: Iterable[int]) -> int:
+        ids = [int(domain_id) for domain_id in domain_ids]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT fqdn FROM domains WHERE id IN ({placeholders})", ids).fetchall()
+            fqdns = [row["fqdn"] for row in rows]
+            if fqdns:
+                fqdn_placeholders = ", ".join("?" for _ in fqdns)
+                conn.execute(
+                    f"DELETE FROM domain_events WHERE domain_id IN ({placeholders}) OR fqdn IN ({fqdn_placeholders})",
+                    ids + fqdns,
+                )
+            else:
+                conn.execute(f"DELETE FROM domain_events WHERE domain_id IN ({placeholders})", ids)
+            cursor = conn.execute(f"DELETE FROM domains WHERE id IN ({placeholders})", ids)
+            return int(cursor.rowcount)
+
+    def delete_all_domains(self) -> int:
+        with self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) AS count FROM domains").fetchone()["count"]
+            conn.execute("DELETE FROM domain_events")
+            conn.execute("DELETE FROM domains")
+            return int(total)
+
+    def delete_domains_imported_before_days(self, days: int, now: str | None = None) -> int:
+        if days < 1:
+            raise ValueError("days must be at least 1")
+        now_dt = datetime.fromisoformat((now or _now()).replace("Z", "+00:00"))
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=UTC)
+        cutoff = (now_dt.astimezone(UTC) - timedelta(days=days)).isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM domains
+                WHERE status = 'active'
+                  AND created_at <= ?
+                  AND (
+                    SELECT event_type FROM domain_events
+                    WHERE domain_id = domains.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                  ) = 'checked'
+                ORDER BY id
+                """,
+                (cutoff,),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+        return self.delete_domains(ids)
 
     def mark_checked(self, domain_id: int, result: dict) -> None:
         with self._connect() as conn:
@@ -217,6 +367,23 @@ def _record(row: sqlite3.Row) -> DomainRecord:
         last_error=row["last_error"],
         openprovider_domain_id=row["openprovider_domain_id"],
         registered_at=row["registered_at"],
+        created_at=row["created_at"],
+    )
+
+
+def _event_record(row: sqlite3.Row) -> DomainEvent:
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return DomainEvent(
+        id=row["id"],
+        domain_id=row["domain_id"],
+        fqdn=row["fqdn"],
+        event_type=row["event_type"],
+        message=row["message"],
+        payload=payload,
+        created_at=row["created_at"],
     )
 
 

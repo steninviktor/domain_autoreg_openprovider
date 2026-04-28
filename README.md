@@ -70,3 +70,23 @@ registration:
 ```
 
 If the list is empty or missing, automatic registration is disabled for every zone. When a free domain is outside this allowlist, the app does not register it and sends a Telegram notification: `<domain> освободился, успевай зарегистрировать`.
+
+## Local GUI
+
+The project includes a local-only web panel that runs on `127.0.0.1` and reuses the existing CLI/service code.
+
+```powershell
+C:\Users\SV\AppData\Local\Programs\Python\Python313\python.exe -m domain_autoreg.cli --env D:\openprovider.env gui
+```
+
+Open the printed `http://127.0.0.1:8765` URL in a browser.
+
+The GUI can list and filter domains, import domains, delete selected domains, view recent database events and the log tail, run one check cycle, start/stop a periodic checker, and edit only these safe config fields with a backup: `check_interval_seconds`, `batch_size`, `registration.max_create_price`, and `registration.allowed_extensions`.
+
+Safety rules:
+
+- The GUI refuses non-local hosts.
+- Secret values from `--env` are not displayed.
+- `registration.enabled` is read-only in the GUI.
+- If `registration.enabled: true`, run actions require explicit confirmation in a warning dialog.
+- Periodic run is blocked in live registration mode when `allowed_extensions` is empty or `max_create_price` is disabled.

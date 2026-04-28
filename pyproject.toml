@@ -16,4 +16,4 @@ yaml = ["PyYAML>=6.0"]
 domain-autoreg = "domain_autoreg.cli:main"
 
 [tool.setuptools]
-packages = ["domain_autoreg"]
+packages = ["domain_autoreg", "domain_autoreg.gui"]

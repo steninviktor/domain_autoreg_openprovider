@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .env
 config.yaml
+config.yaml.bak-*
 domains.txt
 state/
 *.sqlite3

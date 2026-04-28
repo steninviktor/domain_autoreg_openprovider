@@ -30,8 +30,19 @@ def main(argv: list[str] | None = None) -> int:
     list_parser = subparsers.add_parser("list")
     list_parser.add_argument("--status", choices=["active", "registered", "registration_failed"])
 
+    gui_parser = subparsers.add_parser("gui")
+    gui_parser.add_argument("--host", default="127.0.0.1")
+    gui_parser.add_argument("--port", type=int, default=8765)
+
     args = parser.parse_args(argv)
     _setup_logging(Path(args.log_file))
+
+    if args.command == "gui":
+        from .gui.web import serve_gui
+
+        serve_gui(Path(args.config), Path(args.env), Path(args.log_file), host=args.host, port=args.port)
+        return 0
+
     config = load_config(Path(args.config), Path(args.env))
 
     if args.command == "init-db":
