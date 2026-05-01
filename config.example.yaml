@@ -2,6 +2,9 @@ database_path: state/domains.sqlite3
 check_interval_seconds: 60
 batch_size: 15
 
+openprovider:
+  timeout_seconds: 120
+
 registration:
   enabled: false
   period: 1

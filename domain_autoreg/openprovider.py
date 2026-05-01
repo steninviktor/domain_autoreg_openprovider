@@ -14,9 +14,9 @@ class OpenproviderError(RuntimeError):
 
 
 class OpenproviderClient:
-    def __init__(self, config: OpenproviderConfig, timeout_seconds: int = 30):
+    def __init__(self, config: OpenproviderConfig, timeout_seconds: int | None = None):
         self.config = config
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else config.timeout_seconds
         self._token: str | None = None
 
     def check_domains(self, domains: list[DomainName]) -> list[dict[str, Any]]:

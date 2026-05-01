@@ -27,6 +27,8 @@ class ConfigTest(unittest.TestCase):
                     [
                         "database_path: state/domains.sqlite3",
                         "check_interval_seconds: 60",
+                        "openprovider:",
+                        "  timeout_seconds: 90",
                         "registration:",
                         "  enabled: false",
                         "  period: 1",
@@ -52,6 +54,7 @@ class ConfigTest(unittest.TestCase):
             config = load_config(config_path, env_path)
 
         self.assertEqual(config.openprovider.username, "user")
+        self.assertEqual(config.openprovider.timeout_seconds, 90)
         self.assertEqual(config.database_path, Path("state/domains.sqlite3"))
         self.assertFalse(config.registration.enabled)
         self.assertEqual(config.registration.owner_handle, "OWNER")
@@ -76,6 +79,26 @@ class ConfigTest(unittest.TestCase):
                     os.environ["OPENPROVIDER_USERNAME"] = old_username
                 if old_password is not None:
                     os.environ["OPENPROVIDER_PASSWORD"] = old_password
+
+    def test_load_config_uses_longer_openprovider_timeout_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_path = root / ".env"
+            config_path = root / "config.yaml"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "OPENPROVIDER_USERNAME=user",
+                        "OPENPROVIDER_PASSWORD=secret",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config_path.write_text("registration:\n  enabled: false\n", encoding="utf-8")
+
+            config = load_config(config_path, env_path)
+
+        self.assertEqual(config.openprovider.timeout_seconds, 120)
 
 
 if __name__ == "__main__":

@@ -11,3 +11,5 @@ state/
 .venv/
 venv/
 docs/session-notes.md
+start_gui.bat
+stop_gui.bat

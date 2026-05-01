@@ -1,11 +1,22 @@
 import unittest
 
-from domain_autoreg.config import RegistrationConfig
+from domain_autoreg.config import OpenproviderConfig, RegistrationConfig
 from domain_autoreg.domain import parse_domain
-from domain_autoreg.openprovider import build_check_payload, build_create_payload
+from domain_autoreg.openprovider import OpenproviderClient, build_check_payload, build_create_payload
 
 
 class OpenproviderPayloadTest(unittest.TestCase):
+    def test_client_uses_configured_timeout(self):
+        client = OpenproviderClient(
+            OpenproviderConfig(
+                username="user",
+                password="secret",
+                timeout_seconds=90,
+            )
+        )
+
+        self.assertEqual(client.timeout_seconds, 90)
+
     def test_build_check_payload_batches_domains_with_price(self):
         payload = build_check_payload([parse_domain("example.com")])
 

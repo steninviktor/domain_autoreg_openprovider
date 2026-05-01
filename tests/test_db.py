@@ -19,6 +19,33 @@ class DomainRepositoryTest(unittest.TestCase):
         self.assertEqual([domain.fqdn for domain in due], ["example.com", "second.net"])
         self.assertTrue(all(domain.created_at for domain in due))
 
+    def test_init_db_normalizes_existing_multi_label_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "domains.sqlite3"
+            init_db(db_path)
+            repo = DomainRepository(db_path)
+            with repo._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO domains (fqdn, name, extension)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("lenslove.co.za", "lenslove.co", "za"),
+                )
+
+            init_db(db_path)
+            listed = repo.list_domains()
+            due = repo.get_due_domains(limit=10)
+            with repo._connect() as conn:
+                stored = conn.execute("SELECT name, extension FROM domains WHERE fqdn = ?", ("lenslove.co.za",)).fetchone()
+
+        self.assertEqual(listed[0].name, "lenslove")
+        self.assertEqual(listed[0].extension, "co.za")
+        self.assertEqual(due[0].as_domain_name().name, "lenslove")
+        self.assertEqual(due[0].as_domain_name().extension, "co.za")
+        self.assertEqual(stored["name"], "lenslove")
+        self.assertEqual(stored["extension"], "co.za")
+
     def test_registered_domain_is_not_due_again(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "domains.sqlite3"

@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from domain_autoreg.config import AppConfig, OpenproviderConfig, RegistrationConfig, TelegramConfig
 from domain_autoreg.db import DomainRecord
@@ -9,8 +10,10 @@ from domain_autoreg.gui.web import (
     GuiContext,
     _domain_table,
     _favicon_svg,
+    _is_noisy_access_log,
     _render_import,
     _run_controls,
+    _setup_gui_logging,
     _status_banner,
     build_status_summary,
     validate_run_request,
@@ -160,6 +163,47 @@ class GuiSafetyTest(unittest.TestCase):
         self.assertNotIn("2026-04-28 04:57", table)
         self.assertNotIn("987654321", table)
 
+    def test_domain_table_shows_user_friendly_statuses(self):
+        table = _domain_table(
+            [
+                DomainRecord(
+                    id=1,
+                    fqdn="free.pl",
+                    name="free",
+                    extension="pl",
+                    status="active",
+                    attempts=0,
+                    last_check_at="2026-04-29T06:29:00+00:00",
+                    next_attempt_at=None,
+                    last_error=None,
+                    openprovider_domain_id=None,
+                    registered_at=None,
+                    created_at="2026-04-29T06:00:00+00:00",
+                    display_status="свободен",
+                ),
+                DomainRecord(
+                    id=2,
+                    fqdn="busy.it",
+                    name="busy",
+                    extension="it",
+                    status="active",
+                    attempts=0,
+                    last_check_at="2026-04-29T06:29:00+00:00",
+                    next_attempt_at=None,
+                    last_error=None,
+                    openprovider_domain_id=None,
+                    registered_at=None,
+                    created_at="2026-04-29T06:00:00+00:00",
+                    display_status="занят",
+                ),
+            ],
+            "all",
+        )
+
+        self.assertIn(">свободен</td>", table)
+        self.assertIn(">занят</td>", table)
+        self.assertNotIn(">active</td>", table)
+
     def test_live_registration_uses_modal_confirmation_instead_of_text_label(self):
         controls = _run_controls(
             self.make_config(enabled=True, allowed_extensions=["it"]),
@@ -238,6 +282,49 @@ class GuiSafetyTest(unittest.TestCase):
         self.assertIn("fetch('/runner-state'", controls)
         self.assertNotIn("reloadSoon(2000)", controls)
         self.assertNotIn("reloadSoon(3000)", controls)
+
+    def test_runner_state_polling_is_not_written_to_access_log(self):
+        self.assertTrue(_is_noisy_access_log('"GET /runner-state HTTP/1.1" 200 -'))
+        self.assertTrue(_is_noisy_access_log('"GET /runner-state?x=1 HTTP/1.1" 200 -'))
+        self.assertFalse(_is_noisy_access_log('"GET / HTTP/1.1" 200 -'))
+        self.assertFalse(_is_noisy_access_log('"POST /run-once HTTP/1.1" 303 -'))
+
+    def test_gui_logging_does_not_add_duplicate_file_handlers(self):
+        import logging
+        import os
+
+        root = logging.getLogger()
+        old_handlers = list(root.handlers)
+        old_level = root.level
+        old_cwd = Path.cwd()
+        tmp_dir = TemporaryDirectory()
+        for handler in old_handlers:
+            root.removeHandler(handler)
+        try:
+            os.chdir(tmp_dir.name)
+            log_file = Path("domain-autoreg.log")
+
+            _setup_gui_logging(log_file)
+            _setup_gui_logging(log_file)
+
+            target = log_file.resolve()
+            matching_handlers = [
+                handler
+                for handler in root.handlers
+                if isinstance(handler, logging.FileHandler)
+                and Path(handler.baseFilename).resolve() == target
+            ]
+        finally:
+            os.chdir(old_cwd)
+            for handler in list(root.handlers):
+                root.removeHandler(handler)
+                handler.close()
+            for handler in old_handlers:
+                root.addHandler(handler)
+            root.setLevel(old_level)
+            tmp_dir.cleanup()
+
+        self.assertEqual(len(matching_handlers), 1)
 
     def test_stopped_runner_does_not_auto_refresh_dashboard(self):
         controls = _run_controls(

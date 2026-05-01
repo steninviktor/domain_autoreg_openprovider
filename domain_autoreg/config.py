@@ -12,6 +12,7 @@ class OpenproviderConfig:
     password: str
     ip: str = "0.0.0.0"
     base_url: str = "https://api.openprovider.eu/v1beta"
+    timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ def load_config(config_path: Path, env_path: Path | None = None) -> AppConfig:
             password=password,
             ip=env.get("OPENPROVIDER_IP", "0.0.0.0"),
             base_url=str(openprovider_data.get("base_url", "https://api.openprovider.eu/v1beta")).rstrip("/"),
+            timeout_seconds=int(openprovider_data.get("timeout_seconds", 120)),
         ),
         registration=RegistrationConfig(
             enabled=bool(registration_data.get("enabled", False)),

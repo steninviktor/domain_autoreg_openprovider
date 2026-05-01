@@ -11,6 +11,13 @@ class DomainParsingTest(unittest.TestCase):
         self.assertEqual(parsed.name, "example")
         self.assertEqual(parsed.extension, "com")
 
+    def test_parse_domain_keeps_known_two_label_extension(self):
+        parsed = parse_domain("QWE.CO.ZA")
+
+        self.assertEqual(parsed.fqdn, "qwe.co.za")
+        self.assertEqual(parsed.name, "qwe")
+        self.assertEqual(parsed.extension, "co.za")
+
     def test_parse_domain_rejects_invalid_domain(self):
         with self.assertRaises(ValueError):
             parse_domain("localhost")

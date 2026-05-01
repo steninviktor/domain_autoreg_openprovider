@@ -25,6 +25,7 @@ class DomainRecord:
     openprovider_domain_id: int | None
     registered_at: str | None
     created_at: str | None = None
+    display_status: str | None = None
 
     def as_domain_name(self) -> DomainName:
         return DomainName(fqdn=self.fqdn, name=self.name, extension=self.extension, id=self.id)
@@ -78,6 +79,7 @@ def init_db(path: Path) -> None:
             )
             """
         )
+        _normalize_domain_parts(conn)
         conn.commit()
     finally:
         conn.close()
@@ -106,19 +108,20 @@ class DomainRepository:
                     self._event(conn, None, domain.fqdn, "imported", "Domain imported", None)
         return imported
 
-    def get_due_domains(self, limit: int) -> list[DomainRecord]:
+    def get_due_domains(self, limit: int | None = None) -> list[DomainRecord]:
         now = _now()
+        query = """
+            SELECT * FROM domains
+            WHERE status IN ('active', 'registration_failed')
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+            ORDER BY id
+        """
+        params: list[object] = [now]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM domains
-                WHERE status IN ('active', 'registration_failed')
-                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                ORDER BY id
-                LIMIT ?
-                """,
-                (now, limit),
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
         return [_record(row) for row in rows]
 
     def list_domains(self, status: str | None = None) -> list[DomainRecord]:
@@ -132,11 +135,11 @@ class DomainRepository:
     def list_domains_for_gui(self, view_filter: str | None = None) -> list[DomainRecord]:
         filter_name = (view_filter or "all").strip().lower()
         if filter_name in {"", "all"}:
-            return self.list_domains()
+            return self._list_domains_with_display_status()
         if filter_name == "registered":
-            return self.list_domains("registered")
+            return self._list_domains_with_display_status("registered")
         if filter_name == "errors":
-            return self.list_domains("registration_failed")
+            return self._list_domains_with_display_status("registration_failed")
 
         with self._connect() as conn:
             if filter_name == "unchecked":
@@ -185,7 +188,51 @@ class DomainRepository:
                 ).fetchall()
             else:
                 rows = conn.execute("SELECT * FROM domains ORDER BY id").fetchall()
-        return [_record(row) for row in rows]
+        return self._with_display_status([_record(row) for row in rows])
+
+    def _list_domains_with_display_status(self, status: str | None = None) -> list[DomainRecord]:
+        return self._with_display_status(self.list_domains(status))
+
+    def _with_display_status(self, domains: list[DomainRecord]) -> list[DomainRecord]:
+        if not domains:
+            return []
+        latest_events = self._latest_event_types([domain.id for domain in domains])
+        return [
+            DomainRecord(
+                id=domain.id,
+                fqdn=domain.fqdn,
+                name=domain.name,
+                extension=domain.extension,
+                status=domain.status,
+                attempts=domain.attempts,
+                last_check_at=domain.last_check_at,
+                next_attempt_at=domain.next_attempt_at,
+                last_error=domain.last_error,
+                openprovider_domain_id=domain.openprovider_domain_id,
+                registered_at=domain.registered_at,
+                created_at=domain.created_at,
+                display_status=_display_status(domain, latest_events.get(domain.id)),
+            )
+            for domain in domains
+        ]
+
+    def _latest_event_types(self, domain_ids: list[int]) -> dict[int, str]:
+        placeholders = ", ".join("?" for _ in domain_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT domain_id, event_type
+                FROM domain_events
+                WHERE id IN (
+                  SELECT MAX(id)
+                  FROM domain_events
+                  WHERE domain_id IN ({placeholders})
+                  GROUP BY domain_id
+                )
+                """,
+                domain_ids,
+            ).fetchall()
+        return {int(row["domain_id"]): row["event_type"] for row in rows if row["domain_id"] is not None}
 
     def list_domain_events(
         self,
@@ -214,6 +261,20 @@ class DomainRepository:
                 params,
             ).fetchall()
         return [_event_record(row) for row in rows]
+
+    def has_domain_event(self, domain_id: int, event_type: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM domain_events
+                WHERE domain_id = ?
+                  AND event_type = ?
+                LIMIT 1
+                """,
+                (domain_id, event_type.strip()),
+            ).fetchone()
+        return row is not None
 
     def delete_domains(self, domain_ids: Iterable[int]) -> int:
         ids = [int(domain_id) for domain_id in domain_ids]
@@ -355,11 +416,12 @@ class DomainRepository:
 
 
 def _record(row: sqlite3.Row) -> DomainRecord:
+    parsed = parse_domain(row["fqdn"])
     return DomainRecord(
         id=row["id"],
         fqdn=row["fqdn"],
-        name=row["name"],
-        extension=row["extension"],
+        name=parsed.name,
+        extension=parsed.extension,
         status=row["status"],
         attempts=row["attempts"],
         last_check_at=row["last_check_at"],
@@ -369,6 +431,38 @@ def _record(row: sqlite3.Row) -> DomainRecord:
         registered_at=row["registered_at"],
         created_at=row["created_at"],
     )
+
+
+def _display_status(domain: DomainRecord, latest_event_type: str | None) -> str:
+    if domain.status == "registered":
+        return "зарегистрирован"
+    if domain.status == "registration_failed":
+        return "ошибка"
+    if latest_event_type in {"free", "dry_run", "manual_registration_required"}:
+        return "свободен"
+    if latest_event_type == "checked" or domain.last_check_at:
+        return "занят"
+    return "не проверен"
+
+
+def _normalize_domain_parts(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT id, fqdn, name, extension FROM domains").fetchall()
+    for row in rows:
+        try:
+            parsed = parse_domain(row["fqdn"])
+        except ValueError:
+            continue
+        if row["name"] == parsed.name and row["extension"] == parsed.extension:
+            continue
+        conn.execute(
+            """
+            UPDATE domains
+            SET name = ?, extension = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (parsed.name, parsed.extension, _now(), row["id"]),
+        )
 
 
 def _event_record(row: sqlite3.Row) -> DomainEvent:

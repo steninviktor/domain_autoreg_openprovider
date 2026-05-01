@@ -171,7 +171,10 @@ def _make_handler(context: GuiContext) -> type[BaseHTTPRequestHandler]:
                 self._redirect("/")
 
         def log_message(self, format: str, *args: object) -> None:
-            logger.info("GUI %s", format % args)
+            message = format % args
+            if _is_noisy_access_log(message):
+                return
+            logger.info("GUI %s", message)
 
         def _query(self) -> dict[str, list[str]]:
             return urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -534,6 +537,10 @@ def _runner_state_payload(runner: RunnerSnapshot) -> dict[str, object]:
     }
 
 
+def _is_noisy_access_log(message: str) -> bool:
+    return message.startswith('"GET /runner-state')
+
+
 def _live_registration_modal() -> str:
     return """
       <div id="live-registration-modal" class="modal-backdrop" hidden>
@@ -605,7 +612,7 @@ def _domain_table(domains, view_filter: str) -> str:
         <tr>
           <td><input class="domain-checkbox" type="checkbox" name="domain_id" value="{domain.id}"></td>
           <td>{_e(domain.fqdn)}</td>
-          <td>{_e(domain.status)}</td>
+          <td>{_e(domain.display_status or domain.status)}</td>
           <td>{_e(domain.extension)}</td>
           <td>{_e(domain.attempts)}</td>
           <td>{_e(_format_date(domain.created_at))}</td>
@@ -849,7 +856,12 @@ def _load_current_config(context: GuiContext) -> AppConfig:
 def _setup_gui_logging(log_file: Path) -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    if not any(isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == log_file for handler in root.handlers):
+    target = log_file.resolve()
+    if not any(
+        isinstance(handler, logging.FileHandler)
+        and Path(handler.baseFilename).resolve() == target
+        for handler in root.handlers
+    ):
         root.addHandler(logging.FileHandler(log_file, encoding="utf-8"))
 
 
